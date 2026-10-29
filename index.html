@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>數學倍數競速挑戰賽 (12 & 13 的倍數)</title>
+  <!-- 引入 MQTT 即時通訊庫 -->
+  <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+  <!-- 引入 QR Code 自動生成庫 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --subtext: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+      --danger: #dc2626;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang TC", "Microsoft JhengHei", sans-serif; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 16px; }
+    .container { width: 100%; max-width: 600px; }
+    .card { background: var(--card-bg); border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.06); padding: 32px 24px; text-align: center; }
+    .hidden { display: none !important; }
+
+    .net-status { font-size: 13px; font-weight: 600; margin-bottom: 15px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; background: #f1f5f9; color: var(--subtext); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    .status-dot.online { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+
+    h1 { font-size: 26px; margin-bottom: 6px; color: #1e3a8a; }
+    p.desc { color: var(--subtext); margin-bottom: 20px; font-size: 15px; }
+
+    .btn { display: inline-flex; justify-content: center; align-items: center; padding: 12px 20px; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; border: none; transition: 0.15s ease; width: 100%; }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-success { background: var(--success); color: #fff; font-size: 18px; }
+    .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--subtext); font-size: 14px; padding: 8px 14px; }
+    .btn-outline:hover { background: #f8fafc; color: var(--text); }
+
+    .lobby-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 10px; }
+    .panel-box { background: #f8fafc; border: 1px solid var(--border); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px; text-align: left; }
+    .panel-box h3 { font-size: 16px; color: #334155; }
+    input[type="text"] { width: 100%; padding: 12px 14px; border: 1.5px solid var(--border); border-radius: 10px; font-size: 15px; outline: none; }
+    input[type="text"]:focus { border-color: var(--primary); }
+
+    .qb-tools { display: flex; gap: 10px; margin-top: 4px; }
+
+    /* 等待室與 QR Code 專區 */
+    .room-badge { display: inline-block; background: #dbeafe; color: #1d4ed8; padding: 6px 20px; font-size: 28px; font-weight: 800; border-radius: 12px; letter-spacing: 4px; margin: 10px 0; }
+    .qr-container { display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 16px 0; padding: 16px; background: #ffffff; border: 2px dashed #cbd5e1; border-radius: 16px; }
+    #qrcode img { margin: 0 auto; border-radius: 8px; }
+    .player-list { list-style: none; margin: 16px 0; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-height: 140px; overflow-y: auto; }
+    .player-chip { background: #e0f2fe; color: #0369a1; padding: 6px 14px; border-radius: 20px; font-weight: 600; font-size: 14px; }
+
+    /* 測驗進行中 */
+    .quiz-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .timer-ring { background: #fef3c7; color: #b45309; padding: 6px 16px; border-radius: 30px; font-weight: 800; font-size: 18px; }
+    .question-title { font-size: 24px; font-weight: 700; color: #1e293b; min-height: 70px; display: flex; align-items: center; justify-content: center; }
+    .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+    .opt-btn { background: #f8fafc; border: 2px solid var(--border); padding: 18px; border-radius: 14px; font-size: 20px; font-weight: 700; color: #334155; cursor: pointer; transition: 0.15s; }
+    .opt-btn:hover:not(:disabled) { border-color: var(--primary); background: #eff6ff; color: var(--primary); }
+    .opt-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+    .opt-btn.correct { background: #dcfce7 !important; border-color: var(--success) !important; color: #15803d !important; }
+    .opt-btn.wrong { background: #fee2e2 !important; border-color: var(--danger) !important; color: #b91c1c !important; }
+    .feedback { font-size: 16px; font-weight: bold; margin-top: 16px; min-height: 24px; }
+
+    /* 頒獎台 */
+    .podium { display: flex; justify-content: center; align-items: flex-end; gap: 12px; margin: 30px 0 20px; }
+    .podium-slot { flex: 1; border-radius: 14px 14px 8px 8px; color: white; display: flex; flex-direction: column; justify-content: flex-end; padding: 12px 6px; text-align: center; font-weight: bold; }
+    .podium-1 { background: linear-gradient(180deg, #f59e0b, #d97706); height: 160px; order: 2; }
+    .podium-2 { background: linear-gradient(180deg, #94a3b8, #64748b); height: 125px; order: 1; }
+    .podium-3 { background: linear-gradient(180deg, #b45309, #78350f); height: 95px; order: 3; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div id="status-pill" class="net-status">
+    <div id="status-dot" class="status-dot"></div>
+    <span id="status-text">連線至雲端即時伺服器中...</span>
+  </div>
+
+  <!-- 大廳畫面 -->
+  <div id="view-lobby" class="card">
+    <h1>🧮 數學倍數競速賽</h1>
+    <p class="desc">12 和 13 的倍數搶答大挑戰</p>
+
+    <div class="lobby-grid">
+      <!-- 學生加入 -->
+      <div class="panel-box">
+        <h3>學生加入</h3>
+        <input type="text" id="input-name" placeholder="請輸入姓名 / 座號">
+        <input type="text" id="input-room" placeholder="請輸入 4 位房間碼" maxlength="4">
+        <button id="btn-join" class="btn btn-primary">進入比賽房間</button>
+      </div>
+
+      <!-- 老師開房 -->
+      <div class="panel-box">
+        <h3>主持新比賽</h3>
+        <button id="btn-create" class="btn btn-primary" style="background:#0f172a">我是房主，開啟新房間 (生成 QR Code)</button>
+        <div class="qb-tools">
+          <button id="btn-export" class="btn btn-outline" style="flex:1">匯出題庫</button>
+          <input type="file" id="file-import" accept=".json" class="hidden">
+          <button id="btn-import-trigger" class="btn btn-outline" style="flex:1">匯入題庫</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 等待室 (含動態 QR Code) -->
+  <div id="view-waiting" class="card hidden">
+    <h2>房間已就緒！房間碼：<span id="label-room" class="room-badge">----</span></h2>
+    
+    <div id="qr-box" class="qr-container hidden">
+      <div id="qrcode"></div>
+      <p style="font-size: 14px; color: #475569; margin-top: 10px; font-weight: 600;">
+        📱 請學生用手機/平板相機掃描直接進房
+      </p>
+    </div>
+
+    <h4 style="margin-top: 15px; color: #475569;">已連線名單：</h4>
+    <ul id="list-players" class="player-list"></ul>
+
+    <button id="btn-start" class="btn btn-success hidden" style="margin-top: 20px;">開始比賽！(共 10 題)</button>
+  </div>
+
+  <!-- 測驗進行中 -->
+  <div id="view-quiz" class="card hidden">
+    <div class="quiz-bar">
+      <span id="quiz-index" style="font-weight: 700; color: #64748b;">第 1 / 10 題</span>
+      <div class="timer-ring">⏳ <span id="quiz-timer">10</span>s</div>
+      <span style="font-weight: 700;">目前得分：<span id="my-score" style="color:var(--primary)">0</span></span>
+    </div>
+
+    <div class="question-title" id="quiz-question">載入題目中...</div>
+    <div class="options-grid" id="quiz-options"></div>
+    <div class="feedback" id="quiz-feedback"></div>
+  </div>
+
+  <!-- 頒獎台畫面 -->
+  <div id="view-result" class="card hidden">
+    <h2>🏆 比賽結束！前三名榮譽榜</h2>
+    <div class="podium" id="podium-area"></div>
+    <button onclick="location.reload()" class="btn btn-primary" style="margin-top: 15px;">再玩一次</button>
+  </div>
+</div>
+
+<script>
+let questionBank = [
+  { q: "12 × 4 = ?", options: ["48", "46", "52", "36"], ans: 0 },
+  { q: "13 × 3 = ?", options: ["26", "39", "42", "36"], ans: 1 },
+  { q: "下列哪個數字是 12 的倍數？", options: ["74", "84", "94", "68"], ans: 1 },
+  { q: "13 × 7 = ?", options: ["81", "91", "101", "78"], ans: 1 },
+  { q: "144 是 12 的幾倍？", options: ["11", "12", "13", "14"], ans: 1 },
+  { q: "13 × 8 = ?", options: ["104", "114", "94", "108"], ans: 0 },
+  { q: "12 × 9 = ?", options: ["98", "108", "118", "106"], ans: 1 },
+  { q: "下列哪個數字是 13 的倍數？", options: ["65", "68", "72", "58"], ans: 0 },
+  { q: "12 × 12 = ?", options: ["124", "134", "144", "154"], ans: 2 },
+  { q: "13 × 9 = ?", options: ["107", "117", "127", "119"], ans: 1 },
+  { q: "12 × 6 = ?", options: ["62", "72", "82", "68"], ans: 1 },
+  { q: "13 × 6 = ?", options: ["78", "88", "68", "74"], ans: 0 },
+  { q: "下列何者不是 12 也不是 13 的倍數？", options: ["24", "26", "35", "36"], ans: 2 }
+];
+
+const myClientId = 'math_' + Math.random().toString(36).substring(2, 10);
+const mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+  clientId: myClientId,
+  clean: true,
+  connectTimeout: 8000
+});
+
+let isHost = false;
+let roomCode = '';
+let myName = '';
+let myScore = 0;
+let players = [];
+let gameQuestions = [];
+let currentIndex = 0;
+let timerInterval = null;
+let timeLeft = 10;
+let questionStartTime = 0;
+let hasAnsweredCurrent = false;
+
+// 頁面載入時：檢查網址是否有自帶 ?room=XXXX 參數（掃碼進來的學生）
+window.addEventListener('DOMContentLoaded', () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const roomParam = urlParams.get('room');
+  if (roomParam) {
+    document.getElementById('input-room').value = roomParam;
+    document.getElementById('input-name').focus(); // 自動跳到姓名輸入框
+  }
+});
+
+mqttClient.on('connect', () => {
+  document.getElementById('status-dot').classList.add('online');
+  document.getElementById('status-text').innerText = '🟢 雲端伺服器已連線，隨時可開房/加入';
+});
+
+function showView(viewId) {
+  ['view-lobby', 'view-waiting', 'view-quiz', 'view-result'].forEach(id => {
+    document.getElementById(id).classList.add('hidden');
+  });
+  document.getElementById(viewId).classList.remove('hidden');
+}
+
+// 房主開房並產生 QR Code
+document.getElementById('btn-create').addEventListener('click', () => {
+  if (!mqttClient.connected) return alert('伺服器連線中，請稍候 2 秒！');
+  isHost = true;
+  myName = "房主";
+  roomCode = Math.floor(1000 + Math.random() * 9000).toString();
+
+  const hostTopic = `math_game/room_${roomCode}/host`;
+  const clientTopic = `math_game/room_${roomCode}/clients`;
+
+  mqttClient.subscribe([hostTopic, clientTopic], () => {
+    document.getElementById('label-room').innerText = roomCode;
+    document.getElementById('btn-start').classList.remove('hidden');
+    players = [{ id: myClientId, name: "房主 (投影機)", score: 0 }];
+    renderPlayers();
+
+    // 產生專屬進房 QR Code
+    const joinUrl = window.location.origin + window.location.pathname + `?room=${roomCode}`;
+    const qrContainer = document.getElementById('qrcode');
+    qrContainer.innerHTML = ''; // 清除舊碼
+    new QRCode(qrContainer, {
+      text: joinUrl,
+      width: 180,
+      height: 180,
+      colorDark: "#0f172a",
+      colorLight: "#ffffff",
+      correctLevel: QRCode.CorrectLevel.M
+    });
+    document.getElementById('qr-box').classList.remove('hidden');
+
+    showView('view-waiting');
+  });
+});
+
+// 學生加入
+document.getElementById('btn-join').addEventListener('click', () => {
+  if (!mqttClient.connected) return alert('伺服器連線中，請稍候 2 秒！');
+  const name = document.getElementById('input-name').value.trim();
+  const code = document.getElementById('input-room').value.trim();
+
+  if (!name || code.length !== 4) return alert('請輸入姓名與 4 位房間碼！');
+
+  myName = name;
+  roomCode = code;
+  isHost = false;
+
+  const hostTopic = `math_game/room_${roomCode}/host`;
+  const clientTopic = `math_game/room_${roomCode}/clients`;
+
+  mqttClient.subscribe([hostTopic, clientTopic], () => {
+    document.getElementById('label-room').innerText = roomCode;
+    document.getElementById('qr-box').classList.add('hidden'); // 學生端不需要顯示 QR code
+    showView('view-waiting');
+
+    mqttClient.publish(clientTopic, JSON.stringify({
+      type: 'JOIN_REQUEST',
+      id: myClientId,
+      name: myName
+    }));
+  });
+});
+
+// 訊息分派核心
+mqttClient.on('message', (topic, message) => {
+  try {
+    const data = JSON.parse(message.toString());
+
+    if (isHost) {
+      if (data.type === 'JOIN_REQUEST') {
+        if (!players.some(p => p.id === data.id)) {
+          players.push({ id: data.id, name: data.name, score: 0 });
+          renderPlayers();
+        }
+        const broadcastTopic = `math_game/room_${roomCode}/host`;
+        mqttClient.publish(broadcastTopic, JSON.stringify({ type: 'SYNC_PLAYERS', players }));
+      } else if (data.type === 'SUBMIT') {
+        handleStudentAnswer(data);
+      }
+    }
+
+    if (data.type === 'SYNC_PLAYERS') {
+      players = data.players;
+      renderPlayers();
+    } else if (data.type === 'NEXT_Q') {
+      displayQuestion(data);
+    } else if (data.type === 'TICK') {
+      document.getElementById('quiz-timer').innerText = data.sec;
+    } else if (data.type === 'FEEDBACK' && data.targetId === myClientId) {
+      showAnswerResult(data);
+    } else if (data.type === 'GAME_OVER') {
+      displayPodium(data.top3);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+});
+
+function renderPlayers() {
+  const ul = document.getElementById('list-players');
+  ul.innerHTML = players.map(p => `<li class="player-chip">👤 ${p.name}</li>`).join('');
+}
+
+function handleStudentAnswer(data) {
+  const p = players.find(x => x.id === data.studentId);
+  if (!p) return;
+
+  const currentQ = gameQuestions[currentIndex];
+  const elapsed = Math.ceil((Date.now() - questionStartTime) / 1000);
+  let pts = 0;
+  const isCorrect = (data.optIndex === currentQ.ans);
+
+  if (isCorrect) {
+    if (elapsed <= 5) pts = 10;
+    else if (elapsed === 6) pts = 9;
+    else if (elapsed === 7) pts = 8;
+    else if (elapsed === 8) pts = 7;
+    else if (elapsed === 9) pts = 6;
+    else if (elapsed === 10) pts = 5;
+  }
+
+  p.score += pts;
+
+  const broadcastTopic = `math_game/room_${roomCode}/host`;
+  mqttClient.publish(broadcastTopic, JSON.stringify({
+    type: 'FEEDBACK',
+    targetId: data.studentId,
+    isCorrect,
+    pts,
+    totalScore: p.score,
+    correctAns: currentQ.ans
+  }));
+}
+
+document.getElementById('btn-start').addEventListener('click', () => {
+  if (questionBank.length < 10) return alert('題庫不足 10 題！');
+  gameQuestions = [...questionBank].sort(() => 0.5 - Math.random()).slice(0, 10);
+  currentIndex = 0;
+  players.forEach(p => p.score = 0);
+  dispatchNextQuestionHost();
+});
+
+function dispatchNextQuestionHost() {
+  const broadcastTopic = `math_game/room_${roomCode}/host`;
+
+  if (currentIndex >= gameQuestions.length) {
+    const validPlayers = players.filter(p => !p.name.includes("房主"));
+    const sorted = validPlayers.sort((a, b) => b.score - a.score);
+    const top3 = sorted.slice(0, 3);
+    mqttClient.publish(broadcastTopic, JSON.stringify({ type: 'GAME_OVER', top3 }));
+    return;
+  }
+
+  const qData = gameQuestions[currentIndex];
+  questionStartTime = Date.now();
+  timeLeft = 10;
+
+  mqttClient.publish(broadcastTopic, JSON.stringify({
+    type: 'NEXT_Q',
+    index: currentIndex + 1,
+    total: gameQuestions.length,
+    q: qData.q,
+    options: qData.options
+  }));
+
+  if (timerInterval) clearInterval(timerInterval);
+
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    mqttClient.publish(broadcastTopic, JSON.stringify({ type: 'TICK', sec: timeLeft }));
+
+    if (timeLeft <= 0) {
+      clearInterval(timerInterval);
+      currentIndex++;
+      setTimeout(() => dispatchNextQuestionHost(), 1500);
+    }
+  }, 1000);
+}
+
+function displayQuestion(data) {
+  showView('view-quiz');
+  hasAnsweredCurrent = false;
+
+  document.getElementById('quiz-index').innerText = `第 ${data.index} / ${data.total} 題`;
+  document.getElementById('quiz-question').innerText = data.q;
+  document.getElementById('quiz-feedback').innerText = '';
+  document.getElementById('quiz-timer').innerText = '10';
+
+  const grid = document.getElementById('quiz-options');
+  grid.innerHTML = '';
+
+  data.options.forEach((opt, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'opt-btn';
+    btn.innerText = opt;
+    btn.onclick = () => {
+      if (hasAnsweredCurrent) return;
+      hasAnsweredCurrent = true;
+      Array.from(grid.children).forEach(b => b.disabled = true);
+
+      const clientTopic = `math_game/room_${roomCode}/clients`;
+      mqttClient.publish(clientTopic, JSON.stringify({
+        type: 'SUBMIT',
+        studentId: myClientId,
+        optIndex: idx
+      }));
+    };
+    grid.appendChild(btn);
+  });
+}
+
+function showAnswerResult(data) {
+  myScore = data.totalScore;
+  document.getElementById('my-score').innerText = myScore;
+  const fb = document.getElementById('quiz-feedback');
+  const buttons = document.getElementById('quiz-options').children;
+
+  if (data.isCorrect) {
+    fb.style.color = 'var(--success)';
+    fb.innerText = `🎉 答對了！獲得 ${data.pts} 分`;
+  } else {
+    fb.style.color = 'var(--danger)';
+    fb.innerText = `❌ 答錯了，獲得 0 分`;
+  }
+
+  if (buttons[data.correctAns]) {
+    buttons[data.correctAns].classList.add('correct');
+  }
+}
+
+function displayPodium(top3) {
+  showView('view-result');
+  const podium = document.getElementById('podium-area');
+  podium.innerHTML = '';
+
+  if (!top3 || top3.length === 0) {
+    podium.innerHTML = '<p>本次比賽無學生作答成績</p>';
+    return;
+  }
+
+  top3.forEach((p, idx) => {
+    const rankNum = idx + 1;
+    const div = document.createElement('div');
+    div.className = `podium-slot podium-${rankNum}`;
+    div.innerHTML = `
+      <div class="rank-title">第 ${rankNum} 名</div>
+      <div style="font-size:16px;word-break:break-all;">${p.name}</div>
+      <div style="font-size:14px;margin-top:4px;">${p.score} 分</div>
+    `;
+    podium.appendChild(div);
+  });
+}
+
+// 題庫匯出與匯入
+document.getElementById('btn-export').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(questionBank, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'math_quiz_questions.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('btn-import-trigger').addEventListener('click', () => {
+  document.getElementById('file-import').click();
+});
+
+document.getElementById('file-import').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const parsed = JSON.parse(event.target.result);
+      if (Array.isArray(parsed) && parsed.length >= 10 && parsed[0].q && parsed[0].options) {
+        questionBank = parsed;
+        alert(`題庫匯入成功！共載入 ${questionBank.length} 題。`);
+      } else {
+        alert('格式不符：需為陣列並具備 q, options, ans 屬性，且至少 10 題！');
+      }
+    } catch {
+      alert('JSON 解析失敗！');
+    }
+  };
+  reader.readAsText(file);
+});
+</script>
+</body>
+</html>
